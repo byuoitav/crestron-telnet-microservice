@@ -86,7 +86,10 @@ func MonitorDMPS(dmps structs.DMPS) {
 
 				x.Timestamp, _ = time.Parse(time.RFC3339, eventParts[3]) //timestamp
 
-				x.EventTags = []string{strings.Replace(strings.ToLower(eventParts[4]), " ", "-", -1), strings.Replace(strings.ToLower(eventParts[5], " ", "-", -1), strings.Replace(strings.ToLower(eventParts[7], " ", "-", -1)}
+				x.EventTags = []string{
+					strings.Replace(strings.ToLower(eventParts[4]), " ", "-", -1), 
+					strings.Replace(strings.ToLower(eventParts[5]), " ", "-", -1), 
+					strings.Replace(strings.ToLower(eventParts[7]), " ", "-", -1)}
 
 				//TargetDevice
 				x.TargetDevice = events.BasicDeviceInfo{
