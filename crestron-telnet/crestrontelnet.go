@@ -66,6 +66,10 @@ func MonitorDMPS(dmps structs.DMPS) {
 
 			eventParts := strings.Split(response, "~")
 
+			for i := range eventParts {
+				eventParts[i] = strings.TrimSpace(eventParts[i])
+			}
+
 			log.L.Debugf("Event Parts:%v,  %v", len(eventParts), eventParts)
 
 			if len(eventParts) == 10 {
@@ -73,6 +77,10 @@ func MonitorDMPS(dmps structs.DMPS) {
 				var x events.Event
 
 				roomParts := strings.Split(eventParts[1], "-")
+
+				for i := range roomParts {
+					roomParts[i] = strings.TrimSpace(roomParts[i])
+				}
 
 				x.GeneratingSystem = eventParts[1] //hostname
 
@@ -95,7 +103,7 @@ func MonitorDMPS(dmps structs.DMPS) {
 					RoomID:     roomParts[0] + "-" + roomParts[1],
 				}
 
-				x.Key = eventParts[7] //eventKeyInfo
+				x.Key = strings.Replace(strings.ToLower(eventParts[7]), " ", "-", -1) //eventKeyInfo
 
 				x.Value = eventParts[8] //eventKeyValue
 
