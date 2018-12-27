@@ -3,6 +3,8 @@ package main
 import (
 	"net/http"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/byuoitav/common"
 	"github.com/byuoitav/common/db/couch"
@@ -34,7 +36,7 @@ func main() {
 
 	//log.SetLevel("debug")
 
-	launchDMPSMonitors()
+	go launchDMPSMonitors()
 
 	err := router.StartServer(&server)
 	if err != nil {
@@ -43,16 +45,26 @@ func main() {
 }
 
 func launchDMPSMonitors() {
-	db := couch.NewDB(address, username, password)
+	for {
 
-	dmpsList, err := db.GetDMPSList()
+		db := couch.NewDB(address, username, password)
 
-	if err != nil {
-		log.L.Fatalf("Error retriving DMPS List %v", err)
-	}
+		dmpsList, err := db.GetDMPSList()
 
-	for _, dmps := range dmpsList.List {
-		log.L.Debugf("Launching dmps %v", dmps)
-		go crestrontelnet.MonitorDMPS(dmps)
+		if err != nil {
+			log.L.Fatalf("Error retriving DMPS List %v", err)
+		}
+
+		killTime := time.Now().Add(time.Minute * 5)
+
+		var waitG sync.WaitGroup
+		waitG.Add(len(dmpsList.List))
+
+		for _, dmps := range dmpsList.List {
+			log.L.Debugf("Launching dmps %v", dmps)
+			go crestrontelnet.MonitorDMPS(dmps, killTime, &waitG)
+		}
+
+		waitG.Wait()
 	}
 }

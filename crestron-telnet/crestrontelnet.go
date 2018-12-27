@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/byuoitav/common/log"
@@ -30,28 +31,42 @@ func init() {
 }
 
 //MonitorDMPS is the function to call in a go routine to monitor an individual DMPS
-func MonitorDMPS(dmps structs.DMPS) {
+func MonitorDMPS(dmps structs.DMPS, killTime time.Time, waitG *sync.WaitGroup) {
 	log.L.Debugf("Connecting to %v on %v:23", dmps.Hostname, dmps.Address)
 
 	connection, bufReader, _, err := StartConnection(dmps.Address, "23")
 
-	defer connection.Close()
-
 	if err != nil {
-		log.L.Debugf("error creating connection. ERROR: %v", err.Error())
+		log.L.Warnf("error creating connection. ERROR: %v", err.Error())
+		time.Sleep(5 * time.Second)
+
+		if killTime.Before(time.Now()) {
+			waitG.Done()
+			return
+		}
+
+		go MonitorDMPS(dmps, killTime, waitG)
+		return
 	}
 
+	defer connection.Close()
+
 	for {
+
+		if killTime.Before(time.Now()) {
+			waitG.Done()
+			return
+		}
 
 		connection.SetReadDeadline(time.Now().Add(90 * time.Second))
 
 		response, err := bufReader.ReadString('\n')
 
 		if err != nil {
-			log.L.Debugf("Error: [%s]", err)
-			log.L.Debugf("Killing and restarting connection")
+			log.L.Warnf("Error: [%s]", err)
+			log.L.Warnf("Killing and restarting connection")
 
-			go MonitorDMPS(dmps)
+			go MonitorDMPS(dmps, killTime, waitG)
 
 			return
 		}
@@ -87,8 +102,8 @@ func MonitorDMPS(dmps structs.DMPS) {
 				x.Timestamp, _ = time.Parse(time.RFC3339, eventParts[3]) //timestamp
 
 				x.EventTags = []string{
-					strings.Replace(strings.ToLower(eventParts[4]), " ", "-", -1), 
-					strings.Replace(strings.ToLower(eventParts[5]), " ", "-", -1), 
+					strings.Replace(strings.ToLower(eventParts[4]), " ", "-", -1),
+					strings.Replace(strings.ToLower(eventParts[5]), " ", "-", -1),
 					strings.Replace(strings.ToLower(eventParts[7]), " ", "-", -1)}
 
 				//TargetDevice
@@ -119,13 +134,13 @@ func MonitorDMPS(dmps structs.DMPS) {
 				sendResponse, nerr := sendEvent(x)
 
 				if nerr != nil {
-					log.L.Debugf("Error sending event %v", nerr.Error())
+					log.L.Warnf("Error sending event %v", nerr.Error())
 				} else {
 					log.L.Debugf("Sending Event Response: [%s]", sendResponse)
 				}
 
 			} else {
-				log.L.Debugf("Malformed Event Received: %s", response)
+				log.L.Warnf("Malformed Event Received: %s", response)
 			}
 
 		} else {
