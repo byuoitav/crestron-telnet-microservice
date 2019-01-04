@@ -31,21 +31,23 @@ func init() {
 }
 
 //MonitorDMPS is the function to call in a go routine to monitor an individual DMPS
-func MonitorDMPS(dmps structs.DMPS, killTime time.Time, waitG *sync.WaitGroup) {
+func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup) {
 	log.L.Debugf("Connecting to %v on %v:23", dmps.Hostname, dmps.Address)
 
 	connection, bufReader, _, err := StartConnection(dmps.Address, "23")
 
 	if err != nil {
-		log.L.Warnf("error creating connection. ERROR: %v", err.Error())
+		log.L.Warnf("error creating connection for %s. ERROR: %v", dmps.Hostname, err.Error())
 		time.Sleep(5 * time.Second)
 
-		if killTime.Before(time.Now()) {
+		select {
+		case <-killChannel:
+			log.L.Debugf("Kill order received for %s", dmps.Hostname)
 			waitG.Done()
-			return
+		default:
+			go MonitorDMPS(dmps, killChannel, waitG)
 		}
 
-		go MonitorDMPS(dmps, killTime, waitG)
 		return
 	}
 
@@ -53,9 +55,12 @@ func MonitorDMPS(dmps structs.DMPS, killTime time.Time, waitG *sync.WaitGroup) {
 
 	for {
 
-		if killTime.Before(time.Now()) {
+		select {
+		case <-killChannel:
+			log.L.Debugf("Kill order received for %s", dmps.Hostname)
 			waitG.Done()
 			return
+		default:
 		}
 
 		connection.SetReadDeadline(time.Now().Add(90 * time.Second))
@@ -63,10 +68,10 @@ func MonitorDMPS(dmps structs.DMPS, killTime time.Time, waitG *sync.WaitGroup) {
 		response, err := bufReader.ReadString('\n')
 
 		if err != nil {
-			log.L.Warnf("Error: [%s]", err)
-			log.L.Warnf("Killing and restarting connection")
+			log.L.Warnf("Error for %s: [%s]", dmps.Hostname, err)
+			log.L.Warnf("Killing and restarting connection for %s", dmps.Hostname)
 
-			go MonitorDMPS(dmps, killTime, waitG)
+			go MonitorDMPS(dmps, killChannel, waitG)
 
 			return
 		}
