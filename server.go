@@ -76,10 +76,10 @@ func launchDMPSMonitors() {
 func monitorDMPSList(currentDmpsList structs.DMPSList, killChannel chan bool) {
 	for {
 		//wait 5 minutes
-		log.L.Warnf("Waiting to check for Dmps list changes")
-		time.Sleep(15 * time.Second)
+		log.L.Debugf("Waiting to check for Dmps list changes")
+		time.Sleep(5 * time.Minute)
 
-		log.L.Warnf("Checking Dmps List for changes")
+		log.L.Debugf("Checking Dmps List for changes")
 
 		//get list
 		db := couch.NewDB(address, username, password)
@@ -97,7 +97,7 @@ func monitorDMPSList(currentDmpsList structs.DMPSList, killChannel chan bool) {
 			newList := make([]structs.DMPS, len(dmpsList.List))
 			copy(oldList, currentDmpsList.List)
 			copy(newList, dmpsList.List)
-			log.L.Warnf("dmps list compare at start, %v, %v", oldList, newList)
+			log.L.Debugf("dmps list compare at start, %v, %v", oldList, newList)
 
 			//compare list
 			for i := 0; i < len(oldList); i++ {
@@ -123,16 +123,16 @@ func monitorDMPSList(currentDmpsList structs.DMPSList, killChannel chan bool) {
 				}
 			}
 
-			log.L.Warnf("dmps list compare at end, %v, %v", oldList, newList)
+			log.L.Debugf("dmps list compare at end, %v, %v", oldList, newList)
 
 			if len(oldList) > 0 || len(newList) > 0 {
-				log.L.Warnf("dmps list difference, %v, %v", oldList, newList)
+				log.L.Debugf("dmps list difference, %v, %v", oldList, newList)
 				needsToRefresh = true
 			}
 
 		} else {
 			needsToRefresh = true
-			log.L.Warnf("dmps list length difference, %v, %v", len(dmpsList.List), len(currentDmpsList.List))
+			log.L.Debugf("dmps list length difference, %v, %v", len(dmpsList.List), len(currentDmpsList.List))
 		}
 
 		if needsToRefresh {
