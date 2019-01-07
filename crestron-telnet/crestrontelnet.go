@@ -32,6 +32,8 @@ func init() {
 
 //MonitorDMPS is the function to call in a go routine to monitor an individual DMPS
 func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup) {
+	if (dmps == nil || dmps.Hostname == nil || dmps.Address == nil) return;
+
 	log.L.Debugf("Connecting to %v on %v:23", dmps.Hostname, dmps.Address)
 
 	connection, bufReader, _, err := StartConnection(dmps.Address, "23")
