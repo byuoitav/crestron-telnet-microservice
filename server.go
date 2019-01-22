@@ -87,7 +87,7 @@ func monitorDMPSList(currentDmpsList structs.DMPSList, killChannel chan bool) {
 		dmpsList, err := db.GetDMPSList()
 
 		if err != nil {
-			log.L.Fatalf("Error retriving DMPS List %v", err)
+			log.L.Warnf("Error retriving DMPS List %v", err)
 		}
 
 		needsToRefresh := false
