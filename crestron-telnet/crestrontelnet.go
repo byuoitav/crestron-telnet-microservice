@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -144,12 +143,10 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 
 				log.L.Debugf("Sending request to state parser [%v]", x)
 
-				sendResponse, nerr := sendEvent(x)
+				nerr := sendEvent(x)
 
 				if nerr != nil {
 					log.L.Warnf("Error sending event %v", nerr.Error())
-				} else {
-					log.L.Debugf("Sending Event Response: [%s]", sendResponse)
 				}
 
 			} else {
@@ -178,15 +175,15 @@ func modifyEvent(event *events.Event) bool {
 	}
 
 	if event.Key == "battery-charge-hours-minutes" && event.Value == "Calc" {
-		//ignore this
-		return false
+		event.Key = "battery-type"
+		event.Value = ""
 	} else if event.Key == "battery-charge-hours-minutes" && event.Value == "AA" {
 		//convert this to a battery-type router
 		event.Key = "battery-type"
 		event.Value = "ALKA"
 	} else if event.Key == "battery-charge-hours-minutes" && strings.Contains(event.Value, ":") {
 		//create another event for battery-charge-minutes
-		hm := strings.Split(event.Value, "-")
+		hm := strings.Split(event.Value, ":")
 		h, _ := strconv.Atoi(hm[0])
 		m, _ := strconv.Atoi(hm[1])
 
@@ -204,67 +201,88 @@ func modifyEvent(event *events.Event) bool {
 			Data:             event.Data,
 		}
 
-		sendResponse, nerr := sendEvent(newEvent)
+		nerr := sendEvent(newEvent)
 
 		if nerr != nil {
 			log.L.Warnf("Error sending event %v", nerr.Error())
-		} else {
-			log.L.Debugf("Sending Event Response: [%s]", sendResponse)
 		}
 
+		//also send an battery-type
+		newEvent = events.Event{
+			GeneratingSystem: event.GeneratingSystem,
+			Timestamp:        event.Timestamp,
+			EventTags:        event.EventTags,
+			TargetDevice:     event.TargetDevice,
+			AffectedRoom:     event.AffectedRoom,
+			Key:              "battery-type",
+			Value:            "",
+			User:             event.User,
+			Data:             event.Data,
+		}
+
+		nerr = sendEvent(newEvent)
+
+		if nerr != nil {
+			log.L.Warnf("Error sending event %v", nerr.Error())
+		}
 	}
 
 	return true
 }
 
-func sendEvent(x events.Event) ([]byte, *nerr.E) {
-	var reqBody []byte
-	var err error
-
+func sendEvent(x events.Event) *nerr.E {
 	// marshal request if not already an array of bytes
-	reqBody, err = json.Marshal(x)
+	reqBody, err := json.Marshal(x)
 	if err != nil {
-		return []byte{}, nerr.Translate(err)
+		log.L.Debugf("Unable to marshal event %v, error:%v", x, err)
+		return nerr.Translate(err)
 	}
 
-	// create the request
-	address := fmt.Sprintf("%s/legacy/v2/event", eventProcessorHost)
-	log.L.Debugf("Sending to address %s", address)
+	eventProcessorHostList := strings.Split(eventProcessorHost, ",")
 
-	req, err := http.NewRequest("POST", address, bytes.NewReader(reqBody))
-	if err != nil {
-		return []byte{}, nerr.Translate(err)
+	for _, hostName := range eventProcessorHostList {
+
+		// create the request
+		log.L.Debugf("Sending to address %s", hostName)
+
+		req, err := http.NewRequest("POST", hostName, bytes.NewReader(reqBody))
+		if err != nil {
+			log.L.Debugf("Unable to post body %v, error:%v", reqBody, err)
+			//return []byte{}, nerr.Translate(err)
+		}
+
+		//no auth needed for state parser
+		//req.SetBasicAuth(username, password)
+
+		// add headers
+		req.Header.Add("content-type", "application/json")
+
+		client := http.Client{
+			Timeout: 5 * time.Second,
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			log.L.Debugf("error sending request: %v", err)
+		} else {
+			defer resp.Body.Close()
+			// read the resp
+			respBody, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				log.L.Debugf("error reading body: %v", err)
+				//return []byte{}, nerr.Translate(err)
+			} else {
+
+				// check resp code
+				if resp.StatusCode/100 != 2 {
+					log.L.Debugf("non 200 reponse code received. code: %v, body: %s", resp.StatusCode, respBody)
+					//return respBody, nerr.Create(msg, http.StatusText(resp.StatusCode))
+				}
+			}
+		}
 	}
 
-	//no auth needed for state parser
-	//req.SetBasicAuth(username, password)
-
-	// add headers
-	req.Header.Add("content-type", "application/json")
-
-	client := http.Client{
-		Timeout: 5 * time.Second,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return []byte{}, nerr.Translate(err)
-	}
-	defer resp.Body.Close()
-
-	// read the resp
-	respBody, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return []byte{}, nerr.Translate(err)
-	}
-
-	// check resp code
-	if resp.StatusCode/100 != 2 {
-		msg := fmt.Sprintf("non 200 reponse code received. code: %v, body: %s", resp.StatusCode, respBody)
-		return respBody, nerr.Create(msg, http.StatusText(resp.StatusCode))
-	}
-
-	return respBody, nil
+	return nil
 }
 
 //StartConnection opens connection, performs handshake, waits for first prompt
