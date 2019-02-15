@@ -82,7 +82,8 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 			log.L.Debugf("Event Received: %s", response)
 
 			//trim off the leading and ending ~
-			response = response[1 : len(response)-1]
+			response = strings.TrimSpace(response)
+			response = response[1 : len(response)-2]
 
 			eventParts := strings.Split(response, "~")
 
@@ -160,11 +161,13 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 }
 
 func modifyEvent(event *events.Event) bool {
-	//hack to fix the items destined for static index
-	//that aren't coming in with the right tag
+
+	//change -CP to -DMPS
 	event.GeneratingSystem = strings.Replace(event.GeneratingSystem, "-CP", "-DMPS", -1)
 	event.TargetDevice.DeviceID = strings.Replace(event.TargetDevice.DeviceID, "-CP", "-DMPS", -1)
 
+	//hack to fix the items destined for static index
+	//that aren't coming in with the right tag
 	if event.Key == "software-version" || event.Key == "hardware-version" || event.Key == "volume" || event.Key == "muted" {
 		event.AddToTags("core-state")
 	}
