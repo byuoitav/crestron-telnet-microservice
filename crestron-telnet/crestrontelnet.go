@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -134,6 +135,13 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 
 				x.Data = response
 
+				shouldSendEvent := modifyEvent(&x)
+
+				if !shouldSendEvent {
+					log.L.Debugf("Ignoring event")
+					return
+				}
+
 				log.L.Debugf("Sending request to state parser [%v]", x)
 
 				sendResponse, nerr := sendEvent(x)
@@ -152,6 +160,61 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 			log.L.Debugf("Something else Received: %s", response)
 		}
 	}
+}
+
+func modifyEvent(event *events.Event) bool {
+	//hack to fix the items destined for static index
+	//that aren't coming in with the right tag
+	event.GeneratingSystem = strings.Replace(event.GeneratingSystem, "-CP", "-DMPS", -1)
+	event.TargetDevice.DeviceID = strings.Replace(event.TargetDevice.DeviceID, "-CP", "-DMPS", -1)
+
+	if event.Key == "software-version" || event.Key == "hardware-version" || event.Key == "volume" || event.Key == "muted" {
+		event.AddToTags("core-state")
+	}
+
+	if event.Key == "IP Address" {
+		event.Key = "ip-address"
+		event.AddToTags("core-state")
+	}
+
+	if event.Key == "battery-charge-hours-minutes" && event.Value == "Calc" {
+		//ignore this
+		return false
+	} else if event.Key == "battery-charge-hours-minutes" && event.Value == "AA" {
+		//convert this to a battery-type router
+		event.Key = "battery-type"
+		event.Value = "ALKA"
+	} else if event.Key == "battery-charge-hours-minutes" && strings.Contains(event.Value, ":") {
+		//create another event for battery-charge-minutes
+		hm := strings.Split(event.Value, "-")
+		h, _ := strconv.Atoi(hm[0])
+		m, _ := strconv.Atoi(hm[1])
+
+		minutes := h*60 + m
+
+		newEvent := events.Event{
+			GeneratingSystem: event.GeneratingSystem,
+			Timestamp:        event.Timestamp,
+			EventTags:        event.EventTags,
+			TargetDevice:     event.TargetDevice,
+			AffectedRoom:     event.AffectedRoom,
+			Key:              "battery-charge-minutes",
+			Value:            strconv.Itoa(minutes),
+			User:             event.User,
+			Data:             event.Data,
+		}
+
+		sendResponse, nerr := sendEvent(newEvent)
+
+		if nerr != nil {
+			log.L.Warnf("Error sending event %v", nerr.Error())
+		} else {
+			log.L.Debugf("Sending Event Response: [%s]", sendResponse)
+		}
+
+	}
+
+	return true
 }
 
 func sendEvent(x events.Event) ([]byte, *nerr.E) {
