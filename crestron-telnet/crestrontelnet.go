@@ -83,7 +83,7 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 
 			//trim off the leading and ending ~
 			response = strings.TrimSpace(response)
-			response = response[1 : len(response)-2]
+			response = response[1 : len(response)-1]
 
 			eventParts := strings.Split(response, "~")
 
@@ -93,7 +93,7 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 
 			log.L.Debugf("Event Parts:%v,  %v", len(eventParts), eventParts)
 
-			if len(eventParts) == 10 {
+			if len(eventParts) == 9 {
 
 				var x events.Event
 
