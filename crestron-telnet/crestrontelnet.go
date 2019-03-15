@@ -180,11 +180,15 @@ func modifyEvent(event *events.Event) bool {
 	if event.Key == "battery-charge-hours-minutes" && event.Value == "Calc" {
 		event.Key = "battery-type"
 		event.Value = ""
-	} else if event.Key == "battery-charge-hours-minutes" && event.Value == "AA" {
+	}
+
+	if event.Key == "battery-charge-hours-minutes" && event.Value == "AA" {
 		//convert this to a battery-type router
 		event.Key = "battery-type"
 		event.Value = "ALKA"
-	} else if event.Key == "battery-charge-hours-minutes" && strings.Contains(event.Value, ":") {
+	}
+
+	if event.Key == "battery-charge-hours-minutes" && strings.Contains(event.Value, ":") {
 		//create another event for battery-charge-minutes
 		hm := strings.Split(event.Value, ":")
 		h, _ := strconv.Atoi(hm[0])
