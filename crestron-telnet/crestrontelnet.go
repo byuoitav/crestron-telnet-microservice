@@ -188,6 +188,10 @@ func modifyEvent(event *events.Event) bool {
 		event.Value = "ALKA"
 	}
 
+	if event.Key == "responsive" && event.TargetDevice.DeviceID == "BRMB-230-D1" {
+		event.Value = "Ok"
+	}
+
 	if event.Key == "battery-charge-hours-minutes" && strings.Contains(event.Value, ":") {
 		//create another event for battery-charge-minutes
 		hm := strings.Split(event.Value, ":")
