@@ -327,3 +327,119 @@ func StartConnection(address string, port string) (*net.TCPConn, *bufio.Reader, 
 
 	return connection, bufReader, bufWriter, nil
 }
+
+//MonitorOtherCrestron is the function to call in a go routine to monitor another crestron device
+func MonitorOtherCrestron(otherCrestronDevice structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup) {
+	log.L.Debugf("Connecting to %v on %v:23", otherCrestronDevice.Hostname, otherCrestronDevice.Address)
+
+	connection, bufReader, bufWriter, err := StartConnection(otherCrestronDevice.Address, "23")
+
+	if err != nil {
+		log.L.Warnf("error creating connection for %s. ERROR: %v", otherCrestronDevice.Hostname, err.Error())
+		time.Sleep(5 * time.Second)
+
+		select {
+		case <-killChannel:
+			log.L.Debugf("Kill order received for %s", otherCrestronDevice.Hostname)
+			waitG.Done()
+		default:
+			go MonitorOtherCrestron(otherCrestronDevice, killChannel, waitG)
+		}
+
+		return
+	}
+
+	defer connection.Close()
+
+	for {
+
+		select {
+		case <-killChannel:
+			log.L.Debugf("Kill order received for %s", otherCrestronDevice.Hostname)
+			waitG.Done()
+			return
+		case <-time.After(1 * time.Second):
+			log.L.Debugf("Checking status of " + otherCrestronDevice.Hostname)
+		}
+
+		if len(otherCrestronDevice.CommandToQuery) > 0 {
+			log.L.Debugf("Writing %s to %s", otherCrestronDevice.CommandToQuery, otherCrestronDevice.Hostname)
+			_, err := bufWriter.WriteString(otherCrestronDevice.CommandToQuery + "\n")
+			if err != nil {
+				log.L.Warnf("Error for %s while writing: [%s]", otherCrestronDevice.Hostname, err)
+			}
+		} else {
+			log.L.Debugf("Writing %s to %s", "VERSION", otherCrestronDevice.Hostname)
+			_, err := bufWriter.WriteString("VERSION\n")
+			if err != nil {
+				log.L.Warnf("Error for %s while writing: [%s]", otherCrestronDevice.Hostname, err)
+			}
+		}
+
+		err := bufWriter.Flush()
+
+		if err != nil {
+			log.L.Warnf("Error for %s when flushing: [%s]", otherCrestronDevice.Hostname, err)
+		}
+		log.L.Debugf("HEREHERE")
+		//wait 30 seconds for response
+		connection.SetReadDeadline(time.Now().Add(30 * time.Second))
+
+		response, err := bufReader.ReadString('\n')
+
+		if err != nil {
+			log.L.Warnf("Error for %s: [%s]", otherCrestronDevice.Hostname, err)
+			log.L.Warnf("Killing and restarting connection for %s", otherCrestronDevice.Hostname)
+
+			go MonitorOtherCrestron(otherCrestronDevice, killChannel, waitG)
+
+			return
+		}
+
+		//we got a response, send it as an event
+		log.L.Debugf("Response for %s received: [%s]", otherCrestronDevice.Hostname, response)
+
+		roomParts := strings.Split(otherCrestronDevice.Hostname, "-")
+
+		for i := range roomParts {
+			roomParts[i] = strings.TrimSpace(roomParts[i])
+		}
+
+		x := events.Event{
+			GeneratingSystem: otherCrestronDevice.Hostname,
+			Timestamp:        time.Now(),
+			EventTags:        []string{"health", "auto-generated", "heartbeat", "core-state"},
+			TargetDevice: events.BasicDeviceInfo{
+				BasicRoomInfo: events.BasicRoomInfo{
+					BuildingID: roomParts[0],
+					RoomID:     roomParts[0] + "-" + roomParts[1],
+				},
+				DeviceID: otherCrestronDevice.Hostname,
+			},
+			AffectedRoom: events.BasicRoomInfo{
+				BuildingID: roomParts[0],
+				RoomID:     roomParts[0] + "-" + roomParts[1],
+			},
+			Key:   "other-crestron-health-check",
+			Value: "response received",
+			User:  "",
+			Data:  response,
+		}
+
+		nerr := sendEvent(x)
+
+		if nerr != nil {
+			log.L.Warnf("Error sending event %v", nerr.Error())
+		}
+
+		select {
+		case <-killChannel:
+			log.L.Debugf("Kill order received for %s", otherCrestronDevice.Hostname)
+			waitG.Done()
+			return
+		case <-time.After(30 * time.Second):
+			log.L.Debugf("30 seconds reached for %s", otherCrestronDevice.Hostname)
+		}
+
+	}
+}
