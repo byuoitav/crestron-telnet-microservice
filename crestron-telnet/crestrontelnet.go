@@ -21,8 +21,39 @@ import (
 )
 
 var (
-	eventProcessorHost = os.Getenv("EVENT_PROCESSOR_HOST")
+	eventProcessorHost   = os.Getenv("EVENT_PROCESSOR_HOST")
+	mutex                sync.Mutex
+	deviceToSetDebugLogs = make(map[string]bool)
 )
+
+//StartMonitoringDevice monitor device - these are simply for monitoring
+func StartMonitoringDevice(id string) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	deviceToSetDebugLogs[id] = true
+}
+
+//StopMonitoringDevice monitor device
+func StopMonitoringDevice(id string) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	deviceToSetDebugLogs[id] = false
+}
+
+//IsMonitoringDevice monitor device
+func IsMonitoringDevice(id string) bool {
+	return false
+
+	// this was slowing it down too much
+	// mutex.Lock()
+	// defer mutex.Unlock()
+	// val, present := deviceToSetDebugLogs[id]
+	// if present {
+	// 	return val
+	// }
+
+	// return false
+}
 
 func init() {
 	if len(eventProcessorHost) == 0 {
@@ -32,9 +63,19 @@ func init() {
 
 //MonitorDMPS is the function to call in a go routine to monitor an individual DMPS
 func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup) {
-	log.L.Debugf("Connecting to %v on %v:23", dmps.Hostname, dmps.Address)
+	if len(dmps.Port) == 0 || dmps.Port == "0" {
+		dmps.Port = "23"
+	}
 
-	connection, bufReader, _, err := StartConnection(dmps.Address, "23")
+	monitor := IsMonitoringDevice(dmps.Hostname)
+
+	if monitor {
+		log.L.Warnf("Connecting to %v on %v:%v", dmps.Hostname, dmps.Address, dmps.Port)
+	} else {
+		log.L.Debugf("Connecting to %v on %v:%v", dmps.Hostname, dmps.Address, dmps.Port)
+	}
+
+	connection, bufReader, _, err := StartConnection(dmps.Address, dmps.Port)
 
 	if err != nil {
 		log.L.Warnf("error creating connection for %s. ERROR: %v", dmps.Hostname, err.Error())
@@ -63,6 +104,8 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 		default:
 		}
 
+		monitor = IsMonitoringDevice(dmps.Hostname)
+
 		connection.SetReadDeadline(time.Now().Add(90 * time.Second))
 
 		response, err := bufReader.ReadString('\n')
@@ -78,8 +121,21 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 
 		match, _ := regexp.MatchString("^~EVENT~", response)
 
+		if !match {
+			index := strings.Index(response, "~EVENT~")
+			if index > -1 {
+				response = response[index:]
+
+				match, _ = regexp.MatchString("^~EVENT~", response)
+			}
+		}
+
 		if match {
-			log.L.Debugf("Event Received: %s", response)
+			if monitor {
+				log.L.Warnf("Event Received: %s", response)
+			} else {
+				log.L.Debugf("Event Received: %s", response)
+			}
 
 			//trim off the leading and ending ~
 			response = strings.TrimSpace(response)
@@ -91,7 +147,11 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 				eventParts[i] = strings.TrimSpace(eventParts[i])
 			}
 
-			log.L.Debugf("Event Parts:%v,  %v", len(eventParts), eventParts)
+			if monitor {
+				log.L.Warnf("Event Parts:%v,  %v", len(eventParts), eventParts)
+			} else {
+				log.L.Debugf("Event Parts:%v,  %v", len(eventParts), eventParts)
+			}
 
 			if len(eventParts) == 9 {
 
@@ -142,7 +202,11 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 					return
 				}
 
-				log.L.Debugf("Sending request to state parser [%v]", x)
+				if monitor {
+					log.L.Warnf("Sending request to state parser [%v]", x)
+				} else {
+					log.L.Debugf("Sending request to state parser [%v]", x)
+				}
 
 				nerr := sendEvent(x)
 
@@ -155,7 +219,11 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 			}
 
 		} else {
-			log.L.Debugf("Something else Received: %s", response)
+			if monitor {
+				log.L.Warnf("Something else Received: %s", response)
+			} else {
+				log.L.Debugf("Something else Received: %s", response)
+			}
 		}
 	}
 }
@@ -317,6 +385,11 @@ func StartConnection(address string, port string) (*net.TCPConn, *bufio.Reader, 
 	bufReader := bufio.NewReader(connection)
 	bufWriter := bufio.NewWriter(connection)
 
+	bufWriter.WriteString("\r\n")
+	bufWriter.Flush()
+
+	connection.SetReadDeadline(time.Now().Add(30 * time.Second))
+
 	response, err := bufReader.ReadString('>')
 	if err != nil {
 		log.L.Debugf("error reading response. ERROR: %v", err.Error())
@@ -330,9 +403,19 @@ func StartConnection(address string, port string) (*net.TCPConn, *bufio.Reader, 
 
 //MonitorOtherCrestron is the function to call in a go routine to monitor another crestron device
 func MonitorOtherCrestron(otherCrestronDevice structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup) {
-	log.L.Debugf("Connecting to %v on %v:23", otherCrestronDevice.Hostname, otherCrestronDevice.Address)
+	if len(otherCrestronDevice.Port) == 0 || otherCrestronDevice.Port == "0" {
+		otherCrestronDevice.Port = "23"
+	}
 
-	connection, bufReader, bufWriter, err := StartConnection(otherCrestronDevice.Address, "23")
+	monitor := IsMonitoringDevice(otherCrestronDevice.Hostname)
+
+	if monitor {
+		log.L.Warnf("Connecting to %v on %v:%v", otherCrestronDevice.Hostname, otherCrestronDevice.Address, otherCrestronDevice.Port)
+	} else {
+		log.L.Debugf("Connecting to %v on %v:%v", otherCrestronDevice.Hostname, otherCrestronDevice.Address, otherCrestronDevice.Port)
+	}
+
+	connection, bufReader, bufWriter, err := StartConnection(otherCrestronDevice.Address, otherCrestronDevice.Port)
 
 	if err != nil {
 		log.L.Warnf("error creating connection for %s. ERROR: %v", otherCrestronDevice.Hostname, err.Error())
@@ -353,13 +436,34 @@ func MonitorOtherCrestron(otherCrestronDevice structs.DMPS, killChannel chan boo
 
 	for {
 
+		monitor = IsMonitoringDevice(otherCrestronDevice.Hostname)
+
 		select {
 		case <-killChannel:
 			log.L.Debugf("Kill order received for %s", otherCrestronDevice.Hostname)
 			waitG.Done()
 			return
-		case <-time.After(1 * time.Second):
-			log.L.Debugf("Checking status of " + otherCrestronDevice.Hostname)
+		default:
+		}
+
+		//before we actually write it, flush out the read buffer
+		toDiscard := bufReader.Buffered()
+
+		if monitor {
+			log.L.Warnf("Clearing out %v that are buffered", toDiscard)
+		} else {
+			log.L.Debugf("Clearing out %v that are buffered", toDiscard)
+		}
+
+		if toDiscard > 0 {
+			b1 := make([]byte, toDiscard)
+			bufReader.Read(b1)
+
+			if monitor {
+				log.L.Warnf("Read and cleared out: %v", b1)
+			} else {
+				log.L.Debugf("Read and cleared out: %v", b1)
+			}
 		}
 
 		if len(otherCrestronDevice.CommandToQuery) > 0 {
@@ -370,7 +474,7 @@ func MonitorOtherCrestron(otherCrestronDevice structs.DMPS, killChannel chan boo
 			}
 		} else {
 			log.L.Debugf("Writing %s to %s", "VERSION", otherCrestronDevice.Hostname)
-			_, err := bufWriter.WriteString("VERSION\n")
+			_, err := bufWriter.WriteString("VERSION\r\n")
 			if err != nil {
 				log.L.Warnf("Error for %s while writing: [%s]", otherCrestronDevice.Hostname, err)
 			}
@@ -381,23 +485,37 @@ func MonitorOtherCrestron(otherCrestronDevice structs.DMPS, killChannel chan boo
 		if err != nil {
 			log.L.Warnf("Error for %s when flushing: [%s]", otherCrestronDevice.Hostname, err)
 		}
-		log.L.Debugf("HEREHERE")
-		//wait 30 seconds for response
-		connection.SetReadDeadline(time.Now().Add(30 * time.Second))
 
-		response, err := bufReader.ReadString('\n')
+		var response string
 
-		if err != nil {
-			log.L.Warnf("Error for %s: [%s]", otherCrestronDevice.Hostname, err)
-			log.L.Warnf("Killing and restarting connection for %s", otherCrestronDevice.Hostname)
+		for {
+			//wait 30 seconds for response
+			connection.SetReadDeadline(time.Now().Add(30 * time.Second))
 
-			go MonitorOtherCrestron(otherCrestronDevice, killChannel, waitG)
+			response, err = bufReader.ReadString('\n')
 
-			return
+			if err != nil {
+				log.L.Warnf("Error for %s: [%s]", otherCrestronDevice.Hostname, err)
+				log.L.Warnf("Killing and restarting connection for %s", otherCrestronDevice.Hostname)
+
+				go MonitorOtherCrestron(otherCrestronDevice, killChannel, waitG)
+
+				return
+			}
+
+			//we got a response, send it as an event
+			response = strings.TrimSpace(response)
+
+			if monitor {
+				log.L.Warnf("Response for %s received: [%s]", otherCrestronDevice.Hostname, response)
+			} else {
+				log.L.Debugf("Response for %s received: [%s]", otherCrestronDevice.Hostname, response)
+			}
+
+			if len(response) > 0 && response != "VERSION" {
+				break
+			}
 		}
-
-		//we got a response, send it as an event
-		log.L.Debugf("Response for %s received: [%s]", otherCrestronDevice.Hostname, response)
 
 		roomParts := strings.Split(otherCrestronDevice.Hostname, "-")
 
@@ -438,8 +556,11 @@ func MonitorOtherCrestron(otherCrestronDevice structs.DMPS, killChannel chan boo
 			waitG.Done()
 			return
 		case <-time.After(30 * time.Second):
-			log.L.Debugf("30 seconds reached for %s", otherCrestronDevice.Hostname)
+			if monitor {
+				log.L.Warnf("30 seconds reached for %s", otherCrestronDevice.Hostname)
+			} else {
+				log.L.Debugf("30 seconds reached for %s", otherCrestronDevice.Hostname)
+			}
 		}
-
 	}
 }

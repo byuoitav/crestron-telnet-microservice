@@ -11,6 +11,7 @@ import (
 	"github.com/byuoitav/common/log"
 	"github.com/byuoitav/common/structs"
 	crestrontelnet "github.com/byuoitav/crestron-telnet-microservice/crestron-telnet"
+	"github.com/labstack/echo"
 )
 
 var (
@@ -35,16 +36,33 @@ func main() {
 		MaxHeaderBytes: 1024 * 10,
 	}
 
-	log.SetLevel("debug")
+	//log.SetLevel("debug")
 
-	//go launchDMPSMonitors()
+	go launchDMPSMonitors()
 
 	go launchOtherCrestronMonitors()
+
+	router.PUT("/debug-logs/start/:id", setDebugLogs)
+	router.PUT("/debug-logs/stop/:id", stopDebugLogs)
 
 	err := router.StartServer(&server)
 	if err != nil {
 		log.L.Fatalf("error running server: %s", err)
 	}
+}
+
+func setDebugLogs(ctx echo.Context) error {
+	id := ctx.Param("id")
+	log.L.Warnf("Setting debug logs for %v", id)
+	crestrontelnet.StartMonitoringDevice(id)
+	return ctx.JSON(http.StatusOK, "ok")
+}
+
+func stopDebugLogs(ctx echo.Context) error {
+	id := ctx.Param("id")
+	log.L.Warnf("Stopping debug logs for %v", id)
+	crestrontelnet.StopMonitoringDevice(id)
+	return ctx.JSON(http.StatusOK, "ok")
 }
 
 func launchDMPSMonitors() {
@@ -68,7 +86,9 @@ func launchDMPSMonitors() {
 
 		for _, dmps := range dmpsList.List {
 			log.L.Debugf("Launching dmps %v", dmps)
+			//if dmps.Hostname == "HFAC-F233-CP1" {
 			go crestrontelnet.MonitorDMPS(dmps, killChannel, &waitG)
+			//}
 		}
 
 		waitG.Wait()
