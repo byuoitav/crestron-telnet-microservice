@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -75,10 +76,9 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 		log.L.Debugf("Connecting to %v on %v:%v", dmps.Hostname, dmps.Address, dmps.Port)
 	}
 
-	connection, bufReader, _, err := StartConnection(dmps.Address, dmps.Port)
-
+	conn, buf, err := StartConnection(dmps.Address, dmps.Port)
 	if err != nil {
-		log.L.Warnf("error creating connection for %s. ERROR: %v", dmps.Hostname, err.Error())
+		log.L.Warnf("unable to start connection with %s: %s", dmps.Hostname, err)
 		time.Sleep(5 * time.Second)
 
 		select {
@@ -92,10 +92,9 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 		return
 	}
 
-	defer connection.Close()
+	defer conn.Close()
 
 	for {
-
 		select {
 		case <-killChannel:
 			log.L.Debugf("Kill order received for %s", dmps.Hostname)
@@ -105,27 +104,20 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 		}
 
 		monitor = IsMonitoringDevice(dmps.Hostname)
-
-		connection.SetReadDeadline(time.Now().Add(90 * time.Second))
-
-		response, err := bufReader.ReadString('\n')
-
+		conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+		response, err := buf.ReadString('\n')
 		if err != nil {
 			log.L.Warnf("Error for %s: [%s]", dmps.Hostname, err)
 			log.L.Warnf("Killing and restarting connection for %s", dmps.Hostname)
-
 			go MonitorDMPS(dmps, killChannel, waitG)
-
 			return
 		}
 
 		match, _ := regexp.MatchString("^~EVENT~", response)
-
 		if !match {
 			index := strings.Index(response, "~EVENT~")
 			if index > -1 {
 				response = response[index:]
-
 				match, _ = regexp.MatchString("^~EVENT~", response)
 			}
 		}
@@ -137,12 +129,11 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 				log.L.Debugf("Event Received: %s", response)
 			}
 
-			//trim off the leading and ending ~
+			// trim off the leading and ending ~
 			response = strings.TrimSpace(response)
-			response = response[1 : len(response)-1]
+			response = strings.Trim(response, "~")
 
 			eventParts := strings.Split(response, "~")
-
 			for i := range eventParts {
 				eventParts[i] = strings.TrimSpace(eventParts[i])
 			}
@@ -154,19 +145,15 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 			}
 
 			if len(eventParts) == 9 {
-
 				var x events.Event
 
 				roomParts := strings.Split(eventParts[1], "-")
-
 				for i := range roomParts {
 					roomParts[i] = strings.TrimSpace(roomParts[i])
 				}
 
-				x.GeneratingSystem = eventParts[1] //hostname
-
+				x.GeneratingSystem = eventParts[1]                       //hostname
 				x.Timestamp, _ = time.Parse(time.RFC3339, eventParts[3]) //timestamp
-
 				x.EventTags = []string{
 					strings.Replace(strings.ToLower(eventParts[4]), " ", "-", -1),
 					strings.Replace(strings.ToLower(eventParts[5]), " ", "-", -1),
@@ -188,15 +175,11 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 				}
 
 				x.Key = strings.Replace(strings.ToLower(eventParts[7]), " ", "-", -1) //eventKeyInfo
-
-				x.Value = eventParts[8] //eventKeyValue
-
+				x.Value = eventParts[8]                                               //eventKeyValue
 				x.User = ""
-
 				x.Data = response
 
 				shouldSendEvent := modifyEvent(&x)
-
 				if !shouldSendEvent {
 					log.L.Debugf("Ignoring event")
 					return
@@ -209,7 +192,6 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 				}
 
 				nerr := sendEvent(x)
-
 				if nerr != nil {
 					log.L.Warnf("Error sending event %v", nerr.Error())
 				}
@@ -217,7 +199,6 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 			} else {
 				log.L.Warnf("Malformed Event Received: %s", response)
 			}
-
 		} else {
 			if monitor {
 				log.L.Warnf("Something else Received: %s", response)
@@ -281,7 +262,6 @@ func modifyEvent(event *events.Event) bool {
 		}
 
 		nerr := sendEvent(newEvent)
-
 		if nerr != nil {
 			log.L.Warnf("Error sending event %v", nerr.Error())
 		}
@@ -300,7 +280,6 @@ func modifyEvent(event *events.Event) bool {
 		}
 
 		nerr = sendEvent(newEvent)
-
 		if nerr != nil {
 			log.L.Warnf("Error sending event %v", nerr.Error())
 		}
@@ -313,25 +292,19 @@ func sendEvent(x events.Event) *nerr.E {
 	// marshal request if not already an array of bytes
 	reqBody, err := json.Marshal(x)
 	if err != nil {
-		log.L.Debugf("Unable to marshal event %v, error:%v", x, err)
 		return nerr.Translate(err)
 	}
 
 	eventProcessorHostList := strings.Split(eventProcessorHost, ",")
-
+	// TODO i see why you weren't returning, i'll just put smee prd first for now
 	for _, hostName := range eventProcessorHostList {
-
 		// create the request
-		log.L.Debugf("Sending to address %s", hostName)
+		log.L.Debugf("Sending event to address %s", hostName)
 
 		req, err := http.NewRequest("POST", hostName, bytes.NewReader(reqBody))
 		if err != nil {
-			log.L.Debugf("Unable to post body %v, error:%v", reqBody, err)
-			//return []byte{}, nerr.Translate(err)
+			return nerr.Translate(err)
 		}
-
-		//no auth needed for state parser
-		//req.SetBasicAuth(username, password)
 
 		// add headers
 		req.Header.Add("content-type", "application/json")
@@ -342,22 +315,18 @@ func sendEvent(x events.Event) *nerr.E {
 
 		resp, err := client.Do(req)
 		if err != nil {
-			log.L.Debugf("error sending request: %v", err)
-		} else {
-			defer resp.Body.Close()
-			// read the resp
+			return nerr.Translate(err)
+		}
+		defer resp.Body.Close()
+
+		// read the resp
+		if resp.StatusCode/100 != 2 {
 			respBody, err := ioutil.ReadAll(resp.Body)
 			if err != nil {
-				log.L.Debugf("error reading body: %v", err)
-				//return []byte{}, nerr.Translate(err)
-			} else {
-
-				// check resp code
-				if resp.StatusCode/100 != 2 {
-					log.L.Debugf("non 200 reponse code received. code: %v, body: %s", resp.StatusCode, respBody)
-					//return respBody, nerr.Create(msg, http.StatusText(resp.StatusCode))
-				}
+				return nerr.Translate(err).Addf("non-200 response: %v. unable to read response body", resp.StatusCode)
 			}
+
+			return nerr.Createf("error", "non-200 response: %v. response body: %s", resp.StatusCode, respBody)
 		}
 	}
 
@@ -365,40 +334,46 @@ func sendEvent(x events.Event) *nerr.E {
 }
 
 //StartConnection opens connection, performs handshake, waits for first prompt
-func StartConnection(address string, port string) (*net.TCPConn, *bufio.Reader, *bufio.Writer, error) {
-	tcpAdder, err := net.ResolveTCPAddr("tcp", address+":"+port)
+func StartConnection(address string, port string) (net.Conn, *bufio.ReadWriter, error) {
+	conn, err := net.DialTimeout("tcp", address+":"+port, 10*time.Second)
 	if err != nil {
-		log.L.Debugf("error resolving address. ERROR: %v", err.Error())
-		return nil, nil, nil, err
-	}
-
-	log.L.Debugf("Resolved to %v", tcpAdder)
-
-	connection, err := net.DialTCP("tcp", nil, tcpAdder)
-	if err != nil {
-		log.L.Debugf("error connecting to host. ERROR: %v", err.Error())
-		return nil, nil, nil, err
+		return nil, nil, fmt.Errorf("unable to open connection: %s", err)
 	}
 
 	log.L.Debugf("Successfully connected.")
+	buf := bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
 
-	bufReader := bufio.NewReader(connection)
-	bufWriter := bufio.NewWriter(connection)
-
-	bufWriter.WriteString("\r\n")
-	bufWriter.Flush()
-
-	connection.SetReadDeadline(time.Now().Add(30 * time.Second))
-
-	response, err := bufReader.ReadString('>')
-	if err != nil {
-		log.L.Debugf("error reading response. ERROR: %v", err.Error())
-		return nil, nil, nil, err
+	newLine := []byte("\r\n")
+	n, err := buf.Write(newLine)
+	switch {
+	case err != nil:
+		conn.Close()
+		return nil, nil, fmt.Errorf("unable to write newline: %s", err)
+	case n != len(newLine):
+		conn.Close()
+		return nil, nil, fmt.Errorf("unable to write newline: only %v/%v bytes written", n, len(newLine))
 	}
 
-	log.L.Debugf("Initial response %v", response)
+	err = buf.Flush()
+	if err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("unable to write newline: %s", err)
+	}
 
-	return connection, bufReader, bufWriter, nil
+	err = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	if err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("unable to set deadline: %s", err)
+	}
+
+	resp, err := buf.ReadString('>')
+	if err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("unable to read first line: %s", err)
+	}
+
+	log.L.Debugf("Initial response %v", resp)
+	return conn, buf, nil
 }
 
 //MonitorOtherCrestron is the function to call in a go routine to monitor another crestron device
@@ -415,8 +390,7 @@ func MonitorOtherCrestron(otherCrestronDevice structs.DMPS, killChannel chan boo
 		log.L.Debugf("Connecting to %v on %v:%v", otherCrestronDevice.Hostname, otherCrestronDevice.Address, otherCrestronDevice.Port)
 	}
 
-	connection, bufReader, bufWriter, err := StartConnection(otherCrestronDevice.Address, otherCrestronDevice.Port)
-
+	conn, buf, err := StartConnection(otherCrestronDevice.Address, otherCrestronDevice.Port)
 	if err != nil {
 		log.L.Warnf("error creating connection for %s. ERROR: %v", otherCrestronDevice.Hostname, err.Error())
 		time.Sleep(5 * time.Second)
@@ -431,11 +405,9 @@ func MonitorOtherCrestron(otherCrestronDevice structs.DMPS, killChannel chan boo
 
 		return
 	}
-
-	defer connection.Close()
+	defer conn.Close()
 
 	for {
-
 		monitor = IsMonitoringDevice(otherCrestronDevice.Hostname)
 
 		select {
@@ -447,8 +419,7 @@ func MonitorOtherCrestron(otherCrestronDevice structs.DMPS, killChannel chan boo
 		}
 
 		//before we actually write it, flush out the read buffer
-		toDiscard := bufReader.Buffered()
-
+		toDiscard := buf.Reader.Buffered()
 		if monitor {
 			log.L.Warnf("Clearing out %v that are buffered", toDiscard)
 		} else {
@@ -457,7 +428,7 @@ func MonitorOtherCrestron(otherCrestronDevice structs.DMPS, killChannel chan boo
 
 		if toDiscard > 0 {
 			b1 := make([]byte, toDiscard)
-			bufReader.Read(b1)
+			buf.Read(b1)
 
 			if monitor {
 				log.L.Warnf("Read and cleared out: %v", b1)
@@ -468,36 +439,32 @@ func MonitorOtherCrestron(otherCrestronDevice structs.DMPS, killChannel chan boo
 
 		if len(otherCrestronDevice.CommandToQuery) > 0 {
 			log.L.Debugf("Writing %s to %s", otherCrestronDevice.CommandToQuery, otherCrestronDevice.Hostname)
-			_, err := bufWriter.WriteString(otherCrestronDevice.CommandToQuery + "\n")
+			_, err := buf.WriteString(otherCrestronDevice.CommandToQuery + "\n")
 			if err != nil {
 				log.L.Warnf("Error for %s while writing: [%s]", otherCrestronDevice.Hostname, err)
 			}
 		} else {
 			log.L.Debugf("Writing %s to %s", "VERSION", otherCrestronDevice.Hostname)
-			_, err := bufWriter.WriteString("VERSION\r\n")
+			_, err := buf.WriteString("VERSION\r\n")
 			if err != nil {
 				log.L.Warnf("Error for %s while writing: [%s]", otherCrestronDevice.Hostname, err)
 			}
 		}
 
-		err := bufWriter.Flush()
-
+		err := buf.Flush()
 		if err != nil {
 			log.L.Warnf("Error for %s when flushing: [%s]", otherCrestronDevice.Hostname, err)
 		}
 
 		var response string
-
 		for {
-			//wait 30 seconds for response
-			connection.SetReadDeadline(time.Now().Add(30 * time.Second))
+			//wait up to 30 seconds for response
+			conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 
-			response, err = bufReader.ReadString('\n')
-
+			response, err = buf.ReadString('\n')
 			if err != nil {
 				log.L.Warnf("Error for %s: [%s]", otherCrestronDevice.Hostname, err)
 				log.L.Warnf("Killing and restarting connection for %s", otherCrestronDevice.Hostname)
-
 				go MonitorOtherCrestron(otherCrestronDevice, killChannel, waitG)
 
 				return
@@ -505,7 +472,6 @@ func MonitorOtherCrestron(otherCrestronDevice structs.DMPS, killChannel chan boo
 
 			//we got a response, send it as an event
 			response = strings.TrimSpace(response)
-
 			if monitor {
 				log.L.Warnf("Response for %s received: [%s]", otherCrestronDevice.Hostname, response)
 			} else {
@@ -518,7 +484,6 @@ func MonitorOtherCrestron(otherCrestronDevice structs.DMPS, killChannel chan boo
 		}
 
 		roomParts := strings.Split(otherCrestronDevice.Hostname, "-")
-
 		for i := range roomParts {
 			roomParts[i] = strings.TrimSpace(roomParts[i])
 		}
@@ -545,7 +510,6 @@ func MonitorOtherCrestron(otherCrestronDevice structs.DMPS, killChannel chan boo
 		}
 
 		nerr := sendEvent(x)
-
 		if nerr != nil {
 			log.L.Warnf("Error sending event %v", nerr.Error())
 		}

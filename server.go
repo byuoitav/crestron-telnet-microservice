@@ -39,7 +39,6 @@ func main() {
 	//log.SetLevel("debug")
 
 	go launchDMPSMonitors()
-
 	go launchOtherCrestronMonitors()
 
 	router.PUT("/debug-logs/start/:id", setDebugLogs)
@@ -169,7 +168,6 @@ func monitorDMPSList(currentDmpsList structs.DMPSList, killChannel chan bool) {
 }
 
 func launchOtherCrestronMonitors() {
-
 	for {
 		log.L.Debugf("Address %s, User %s", address, username)
 		db := couch.NewDB(address, username, password)
