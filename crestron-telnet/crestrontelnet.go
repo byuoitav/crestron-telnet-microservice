@@ -131,7 +131,13 @@ func MonitorDMPS(dmps structs.DMPS, killChannel chan bool, waitG *sync.WaitGroup
 
 			// trim off the leading and ending ~
 			response = strings.TrimSpace(response)
-			response = strings.Trim(response, "~")
+			if strings.HasPrefix(response, "~") {
+				response = response[1:len(response)]
+			}
+
+			if strings.HasSuffix(response, "~") {
+				response = response[0 : len(response)-1]
+			}
 
 			eventParts := strings.Split(response, "~")
 			for i := range eventParts {
