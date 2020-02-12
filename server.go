@@ -36,13 +36,15 @@ func main() {
 		MaxHeaderBytes: 1024 * 10,
 	}
 
-	//log.SetLevel("debug")
-
 	go launchDMPSMonitors()
 	go launchOtherCrestronMonitors()
 
 	router.PUT("/debug-logs/start/:id", setDebugLogs)
 	router.PUT("/debug-logs/stop/:id", stopDebugLogs)
+
+	router.GET("/healthz", func(c echo.Context) error {
+		return c.String(http.StatusOK, "healthy")
+	})
 
 	err := router.StartServer(&server)
 	if err != nil {
