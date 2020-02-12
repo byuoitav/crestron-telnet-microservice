@@ -49,7 +49,7 @@ module "deployment" {
   name           = "crestron-telnet-microservice"
   image          = "docker.pkg.github.com/byuoitav/crestron-telnet-microservice/crestron-telnet-microservice"
   image_version  = "v0.1.1"
-  container_port = 9998
+  container_port = 10015
   repo_url       = "https://github.com/byuoitav/crestron-telnet-microservice"
 
   // optional
